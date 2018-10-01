@@ -4,11 +4,10 @@ import cats.MonadError
 import cats.effect._
 import cats.syntax.all._
 import org.http4s._
-import org.http4s.dsl.Http4sDsl
-import org.http4s.server.Server
-import org.http4s.server.blaze.BlazeBuilder
 import org.http4s.circe.jsonEncoderOf
+import org.http4s.dsl.Http4sDsl
 import org.http4s.dsl.impl.EntityResponseGenerator
+import org.http4s.server.blaze.BlazeServerBuilder
 import shapeless._
 import shapeless.ops.hlist._
 import typedapi.server._
@@ -16,7 +15,7 @@ import typedapi.shared._
 
 package object server extends PrimitiveExtractors {
 
-  private def responseGen[F[_]](status: Status) = new EntityResponseGenerator[F] { val status: Status = status }
+  private def responseGen[F[_]](_status: Status) = new EntityResponseGenerator[F] { val status: Status = _status }
 
   implicit def encodeHttpError[F[_]: Sync]: EntityEncoder[F, HttpError] = jsonEncoderOf[F, Unit].contramap(_ => ())
 
@@ -91,14 +90,14 @@ package object server extends PrimitiveExtractors {
 
   implicit def mountEndpoints[F[_]](implicit
     S: Sync[F]
-  ) = new MountEndpoints[BlazeBuilder[F], Request[F], F[Response[F]]] {
+  ) = new MountEndpoints[BlazeServerBuilder[F], Request[F], F[Response[F]]] {
     val dsl = Http4sDsl[F]
 
     import dsl._
 
-    type Out = F[Server[F]]
+    type Out = F[ExitCode]
 
-    def apply(server: ServerManager[BlazeBuilder[F]], endpoints: List[Serve[Request[F], F[Response[F]]]]): Out = {
+    def apply(server: ServerManager[BlazeServerBuilder[F]], endpoints: List[Serve[Request[F], F[Response[F]]]]): Out = {
       val service = HttpRoutes.of[F] {
         case request =>
           def execute(eps: List[Serve[Request[F], F[Response[F]]]], eReq: EndpointRequest): F[Response[F]] = eps match {
@@ -130,7 +129,10 @@ package object server extends PrimitiveExtractors {
             execute(endpoints, eReq)
       }
 
-      server.server.bindHttp(server.port, server.host).mountService(service, "/").start
+      server.server.bindHttp(server.port, server.host).withHttpApp(service.orNotFound).serve
+        .compile
+        .drain
+        .as(ExitCode.Success)
     }
   }
 
