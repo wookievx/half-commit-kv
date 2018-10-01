@@ -7,10 +7,10 @@ import halfcommit.api
 import halfcommit.api.{ETagQuery, EntityTag}
 import io.circe.Json
 import io.circe.syntax._
-import org.http4s.{EntityDecoder, EntityEncoder}
 import org.http4s.circe._
 import org.http4s.server.blaze.BlazeServerBuilder
 import typedapi.server._
+
 
 object Launcher extends IOApp {
 
@@ -28,15 +28,11 @@ object Launcher extends IOApp {
     IO.pure(success(Json.fromString("OK")).asRight[HttpError])
   def delete(id: String, matching: ETagQuery): IO[Result[Json]] = put(id, matching, Json.Null)
 
-
   def run(args: List[String]): IO[ExitCode] = {
 
-    val endpoints = derive[IO](api.putEndpoint[Json, String]).from(put)
+    val endpoints = deriveAll[IO](api.endpoint[Json, String]).from(get, put, post, delete)
     val sm = ServerManager(BlazeServerBuilder[IO], "0.0.0.0", 8080)
 
-    implicitly[EntityEncoder[IO, HttpError]]
-    implicitly[EntityEncoder[IO, Json]]
-    implicitly[EntityDecoder[IO, Json]]
     mount(sm, endpoints)
   }
 
