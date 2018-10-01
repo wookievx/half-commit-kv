@@ -1,8 +1,9 @@
-package halfcommit.typedapi.http4s
+package halfcommit.extensions.typedapi.http4s
 
 import cats.MonadError
 import cats.effect._
 import cats.syntax.all._
+import io.circe.Encoder
 import org.http4s._
 import org.http4s.circe.jsonEncoderOf
 import org.http4s.dsl.Http4sDsl
@@ -13,11 +14,18 @@ import shapeless.ops.hlist._
 import typedapi.server._
 import typedapi.shared._
 
-package object server extends PrimitiveExtractors {
+package object server extends PrimitiveExtractors with HeaderExtractors {
 
   private def responseGen[F[_]](_status: Status) = new EntityResponseGenerator[F] { val status: Status = _status }
 
-  implicit def encodeHttpError[F[_]: Sync]: EntityEncoder[F, HttpError] = jsonEncoderOf[F, Unit].contramap(_ => ())
+  implicit val errorEncoder: Encoder[HttpError] = {
+    import io.circe.generic.semiauto._
+    implicit val encodeCode: Encoder[ErrorCode] = Encoder.encodeInt.contramap(_.statusCode)
+    val _ = encodeCode
+    deriveEncoder[HttpError]
+  }
+
+  implicit def encodeHttpError[F[_]: Sync]: EntityEncoder[F, HttpError] = jsonEncoderOf[F, HttpError]
 
   private class StatusParseError(parseCause: Throwable, cause: Option[Throwable]) extends
     Throwable(parseCause.getMessage, parseCause)
@@ -55,9 +63,9 @@ package object server extends PrimitiveExtractors {
   implicit def withReqBodyExecutor[El <: HList, KIn <: HList, VIn <: HList, Bd, M <: MethodType, ROut <: HList, POut <: HList, F[_], FOut]
   (implicit
     encoder: EntityEncoder[F, FOut],
-    ME: MonadError[F, Throwable],
     errorEncoder: EntityEncoder[F, HttpError],
     decoder: EntityDecoder[F, Bd],
+    ME: MonadError[F, Throwable],
     _prepend: Prepend.Aux[ROut, Bd :: HNil, POut],
     _eqProof: POut =:= VIn) = new ReqBodyExecutor[El, KIn, VIn, Bd, M, ROut, POut, F, FOut] {
     type R = Request[F]

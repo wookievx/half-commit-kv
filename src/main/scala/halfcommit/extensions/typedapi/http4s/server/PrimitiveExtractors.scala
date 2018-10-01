@@ -1,4 +1,4 @@
-package halfcommit.typedapi.http4s.server
+package halfcommit.extensions.typedapi.http4s.server
 
 import typedapi.server.ValueExtractor
 
