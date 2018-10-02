@@ -1,6 +1,6 @@
-package halfcommit.typedapi.http4s.client
+package halfcommit.extensions.typedapi.http4s.client
 
-import cats._
+import cats.{Applicative, Monad}
 import org.http4s._
 import org.http4s.client.Client
 import typedapi.client._

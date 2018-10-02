@@ -1,16 +1,13 @@
-package halfcommit.typedapi.http4s
+package halfcommit.extensions.typedapi.http4s
 
-import cats.{Applicative, MonadError}
+import cats._
 import cats.syntax.all._
 import org.http4s.Status.Successful
+import org.http4s.client.Client
 import org.http4s._
-import org.http4s.client._
 import typedapi.client._
 
 package object client {
-
-  case class HttpError(code: Status, message: String, cause: Option[Throwable])
-    extends Throwable(s"Request failed, code: $code, message: $message", cause.orNull)
 
   type RawHttp4sGet[F[_]] = RawGetRequest[Client[F], F] { type Resp = Response[F] }
   type RawHttp4sPut[F[_]] = RawPutRequest[Client[F], F] { type Resp = Response[F] }
@@ -21,8 +18,12 @@ package object client {
 
   private[client] implicit class Http4sRequestOps[F[_]](req: Request[F]) {
 
-    def withQuery(query: Map[String, Seq[String]]): Request[F] = {
-      req.withUri(req.uri =? query)
+    def withQuery(queries: Map[String, List[String]]): Request[F] = {
+      if (queries.nonEmpty) {
+        val uri = req.uri =? queries
+        req.withUri(uri)
+      }
+      else req
     }
 
     def withHeaders(headers: Map[String, String]): Request[F] = {
@@ -38,34 +39,35 @@ package object client {
       cm.client.fetch(req)(resp => F.pure(resp))
   }
 
+
+  private[client] def decodeFailedResponse[F[_], A](
+    response: Response[F]
+  )(implicit
+    EF: MonadError[F, Throwable],
+    asStr: EntityDecoder[F, String]
+  ): F[A] = asStr.decode(response, strict = false).fold(
+    error =>
+      EF.raiseError[A](DecodeError("Failed to unmarhsal response", Some(error))),
+    errorStr =>
+      EF.raiseError[A](ResponseError(response.status.code, errorStr))
+  ).flatten
+
   private[client] implicit class Http4sResponseOps[F[_]](private val resp: Response[F]) extends AnyVal {
 
     def decode[A](implicit
       d: EntityDecoder[F, A],
       asStr: EntityDecoder[F, String],
-      F: MonadError[F, Throwable],
+      F: MonadError[F, Throwable]
     ): F[A] = resp match {
       case Successful(_resp) =>
         d.decode(_resp, strict = false).fold(
-          t => F.raiseError[A](HttpError(Status.BadGateway, t.getMessage(), Some(t))),
+          t => F.raiseError[A](DecodeError(t.message, Some(t))),
           F.pure
         ).flatten
       case failedResponse =>
         decodeFailedResponse(failedResponse)
     }
   }
-
-  private[client] def decodeFailedResponse[F[_], A](
-    response: Response[F]
-  )(implicit
-    asStr: EntityDecoder[F, String],
-    EF: MonadError[F, Throwable],
-  ): F[A] = asStr.decode(response, strict = false).fold(
-    error =>
-      EF.raiseError[A](HttpError(Status.BadGateway, error.getMessage(), Some(error))),
-    error => EF.raiseError[A](HttpError(response.status, error, None))
-  ).flatten
-
 
   implicit def getRequest[F[_], A](implicit
     decoder: EntityDecoder[F, A],
@@ -134,5 +136,7 @@ package object client {
     def apply(uri: List[String], queries: Map[String, List[String]], headers: Map[String, String], cm: ClientManager[Client[F]]): F[A] =
       F.flatMap(raw(uri, queries, headers, cm))(_.decode[A])
   }
+
+
 
 }

@@ -8,7 +8,7 @@ libraryDependencies += "com.arangodb" % "arangodb-java-driver" % "5.0.0"
 
 libraryDependencies ++= Seq(
   "com.github.pheymann" %% "typedapi-client" % "0.2.0", 
-  "com.github.pheymann" %% "typedapi-server" % "0.2.0"
+  "com.github.pheymann" %% "typedapi-server" % "0.2.0",
 )
 
 libraryDependencies ++= Seq(
