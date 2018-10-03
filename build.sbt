@@ -4,7 +4,7 @@ version := "0.1"
 
 scalaVersion := "2.12.7"
 
-libraryDependencies += "com.arangodb" % "arangodb-java-driver" % "5.0.0"
+libraryDependencies += "com.arangodb" % "arangodb-java-driver-async" % "5.0.0"
 
 libraryDependencies ++= Seq(
   "com.github.pheymann" %% "typedapi-client" % "0.2.0", 

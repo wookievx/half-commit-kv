@@ -6,8 +6,9 @@ package object api {
 
   type EntityTag = org.http4s.headers.ETag.EntityTag
 
-  val `If-Match` = Header[ETagQuery]("If-Match")
-  val ETag = Header[EntityTag]("ETag")
+  val `If-Match` = Header[String]("If-Match")
+  val IfMatchS = Header[String]("If-Match")
+  val ETag = Header[String]("ETag")
 
   def endpoint[Body, ID] =
     getEndpoint[Body, ID] :|:

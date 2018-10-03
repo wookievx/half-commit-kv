@@ -4,7 +4,6 @@ import cats.effect._
 import cats.syntax.all._
 import halfcommit.extensions.typedapi.http4s.server._
 import halfcommit.api
-import halfcommit.api.{ETagQuery, EntityTag}
 import io.circe.Json
 import io.circe.syntax._
 import org.http4s.circe._
@@ -14,19 +13,14 @@ import typedapi.server._
 
 object Launcher extends IOApp {
 
-  def success[T](v: T): (SuccessCode, T) = SuccessCode(200) -> v
+  def ????[T]: IO[T] = IO.raiseError(new NotImplementedError("Not implemented IO stub"))
 
   def get(id: String): IO[Result[Json]] =
-    IO.pure(success(Json.obj("test" := "value")).asRight[HttpError])
-
-  def getDebug(id: String, matching: ETagQuery): IO[Result[Json]] =
-    get(id)
-
-  def put(id: String, matching: ETagQuery, value: Json): IO[Result[Json]] = ???
-  def putRaw(id: String, value: Json): IO[Result[Json]] = ???
-  def post(id: String, etag: EntityTag, value: Json): IO[Result[Json]] =
+    IO.pure(successWith(SuccessCode(200))(Json.obj("test" := "value")))
+  def put(id: String, matching: String, value: Json): IO[Result[Json]] = ????
+  def post(id: String, etag: String, value: Json): IO[Result[Json]] = ????
     IO.pure(success(Json.fromString("OK")).asRight[HttpError])
-  def delete(id: String, matching: ETagQuery): IO[Result[Json]] = put(id, matching, Json.Null)
+  def delete(id: String, matching: String): IO[Result[Json]] = ????
 
   def run(args: List[String]): IO[ExitCode] = {
 

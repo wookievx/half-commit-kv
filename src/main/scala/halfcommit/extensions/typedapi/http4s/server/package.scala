@@ -81,8 +81,11 @@ package object server extends PrimitiveExtractors with HeaderExtractors {
     def apply(req: R, eReq: EndpointRequest, endpoint: Endpoint[El, KIn, VIn, M, (BodyType[Bd], ROut), F, FOut]): Either[ExtractionError, Out] = {
       extract(eReq, endpoint) map { case (_, extracted) =>
         val successCode = for {
-          body <- req.as[Bd]
-          responseEither <- execute(extracted, body, endpoint)
+          body <- req.as[Bd].attempt
+          responseEither <- body.fold(
+            t => ME.pure(errorWith[FOut](ErrorCode(400), t.getMessage)),
+            execute(extracted, _, endpoint)
+          )
         } yield responseEither
         successCode flatMap {
           case Right((code, response)) =>
