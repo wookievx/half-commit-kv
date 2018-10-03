@@ -20,6 +20,8 @@ libraryDependencies ++= Seq(
 
 libraryDependencies += "org.specs2" %% "specs2-core" % "4.3.4" % Test
 
+libraryDependencies += "com.github.nscala-time" %% "nscala-time" % "2.20.0"
+
 libraryDependencies ++= Seq(
   "org.http4s" %% "http4s-dsl" % "0.19.0-M3",
   "org.http4s" %% "http4s-blaze-server" % "0.19.0-M3",

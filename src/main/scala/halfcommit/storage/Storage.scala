@@ -1,16 +1,18 @@
-package halfcommit.storage.util
+package halfcommit.storage
 
-import com.arangodb.{ArangoCollectionAsync, ArangoDBException, ArangoDatabaseAsync}
 import cats.effect._
 import cats.effect.concurrent._
 import cats.instances.option._
 import cats.syntax.all._
 import com.arangodb.entity.DocumentUpdateEntity
 import com.arangodb.model._
-import halfcommit.storage.util.Storage.Document
-import io.circe.syntax._
-import io.circe.jawn.parse
+import com.arangodb.{ArangoCollectionAsync, ArangoDBException, ArangoDatabaseAsync}
+import halfcommit.storage.Storage.Document
+import halfcommit.storage.util.FromJavaFuture
 import io.circe._
+import io.circe.jawn.parse
+import io.circe.syntax._
+import io.circe.generic.semiauto._
 
 import scala.collection.JavaConverters._
 
@@ -46,6 +48,11 @@ object Storage {
   private val deleteOptions = (new DocumentDeleteOptions).returnOld(true)
 
   case class Document[T](key: String, value: T, revision: Option[String] = None)
+
+  implicit def documentDecoder[T: Decoder]: Decoder[Document[T]] = deriveDecoder
+  implicit def documentEncoder[T: Encoder]: Encoder[Document[T]] = deriveEncoder
+
+  case class Versioned[T](doc: T, revision: String) //todo implement revision properly
 
   case class CollectionConfig(numShards: Int, replication: Int, shardKeys: List[String])
 
