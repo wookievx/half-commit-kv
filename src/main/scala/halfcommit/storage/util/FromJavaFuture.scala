@@ -13,6 +13,7 @@ trait FromJavaFuture[F[_]] {
 }
 
 object FromJavaFuture {
+  def apply[F[_]](implicit fjf: FromJavaFuture[F]): FromJavaFuture[F] = fjf
 
   private class EffectFromJavaFuture[F[_]](implicit EF: Effect[F]) extends FromJavaFuture[F] {
     override def delayFuture[T: ClassTag](future: F[CompletableFuture[T]]): F[Option[T]] = future flatMap { f =>
