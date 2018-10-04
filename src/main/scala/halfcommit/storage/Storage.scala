@@ -4,10 +4,11 @@ import cats.effect._
 import cats.effect.concurrent._
 import cats.instances.option._
 import cats.syntax.all._
-import com.arangodb.entity.DocumentUpdateEntity
+import cats.instances.either._
+import com.arangodb.entity.{DocumentCreateEntity, DocumentUpdateEntity}
 import com.arangodb.model._
 import com.arangodb.{ArangoCollectionAsync, ArangoDBException, ArangoDatabaseAsync}
-import halfcommit.storage.Storage.Document
+import halfcommit.storage.Storage.{Document, Revised}
 import halfcommit.storage.util.FromJavaFuture
 import io.circe._
 import io.circe.jawn.parse
@@ -20,27 +21,41 @@ trait Storage[F[_]] {
 
   def getDocument[T](collection: String, key: String)(implicit
     decoder: Decoder[T]
-  ): F[Option[T]]
+  ): F[Option[Revised[T]]]
 
   def deleteDocument[T](collection: String, key: String, revision: Option[String] = None): F[Unit]
 
   def createDocument[T](name: String, document: Document[T])(implicit
-    encoder: Encoder[T]
-  ): F[Unit]
+    encoder: Encoder[T],
+    decoder: Decoder[T]
+  ): F[Revised[T]]
 
   def putDocument[T](name: String, document: Document[T])(implicit
-    encoder: Encoder[T]
-  ): F[Unit]
+    encoder: Encoder[T],
+    decoder: Decoder[T]
+  ): F[Revised[T]]
 
 
   def updateDocument[T](name: String, document: Document[T])(implicit
     encoder: Encoder[T],
     decoder: Decoder[T]
-  ): F[T]
+  ): F[Revised[T]]
 
 }
 
 object Storage {
+
+  case class Revised[T](value: T, revision: Revision)
+
+  implicit def unpack[T](revised: Revised[T]): T = revised.value
+
+  implicit def decoder[T](implicit decodeValue: Decoder[T]): Decoder[Revised[T]] = { hc =>
+    val value = decodeValue(hc)
+    val revision = hc.downField("_rev").as[Revision]
+    (value, revision).mapN(Revised[T])
+  }
+
+  type Revision = String
 
   private val createOptions = (new DocumentCreateOptions).returnNew(true).waitForSync(true)
   private val replaceOptions = (new DocumentReplaceOptions).returnNew(true).waitForSync(true).ignoreRevs(false)
@@ -50,11 +65,14 @@ object Storage {
   case class Document[T](key: String, value: T, revision: Option[String] = None)
 
   implicit def documentDecoder[T: Decoder]: Decoder[Document[T]] = deriveDecoder
+
   implicit def documentEncoder[T: Encoder]: Encoder[Document[T]] = deriveEncoder
 
   case class Versioned[T](doc: T, revision: String) //todo implement revision properly
 
   case class CollectionConfig(numShards: Int, replication: Int, shardKeys: List[String])
+
+  case class StorageException(code: Int, message: String) extends Throwable(message)
 
   val collectionConfig: CollectionConfig = CollectionConfig(
     2,
@@ -63,6 +81,25 @@ object Storage {
   )
 
   import collectionConfig._
+
+  trait ResponseEntity[E] {
+    def newDoc(entity: E): String
+  }
+
+  private implicit val documentCreateEntity: ResponseEntity[DocumentCreateEntity[String]] = _.getNew
+  private implicit val documentUpdateEntity: ResponseEntity[DocumentUpdateEntity[String]] = _.getNew
+
+  private implicit class ResponseEntityOps[F[_], E](private val entityF: F[E]) extends AnyVal {
+    def newDocF[T: Decoder](implicit isEntity: ResponseEntity[E], F: Effect[F]): F[Revised[T]] =
+      for {
+        e <- entityF
+        res <- parse(isEntity.newDoc(e)).flatMap(_.as[Revised[T]]).fold(
+          F.raiseError[Revised[T]],
+          F.pure
+        )
+      } yield res
+  }
+
 
   class DefaultStorage[F[_] : ConcurrentEffect : FromJavaFuture](private val db: ArangoDatabaseAsync) extends Storage[F] {
     private val F = ConcurrentEffect[F]
@@ -111,20 +148,21 @@ object Storage {
       }
     } yield collection
 
+    private def parseRevised[T: Decoder](payload: String): F[Revised[T]] =
+      parse(payload).flatMap(_.as[Revised[T]]).fold(
+        F.raiseError,
+        F.pure
+      )
+
     def getDocument[T](collection: String, key: String)(implicit
       decoder: Decoder[T]
-    ): F[Option[T]] = for {
+    ): F[Option[Revised[T]]] = for {
       collectionOpt <- collectionF(collection)
       docOpt <- collectionOpt traverse { c =>
         for {
           docRawOpt <-
             FJF.delayFuture(F.delay(c.getDocument[String](key, classOf[String])))
-          docOpt <- docRawOpt traverse { s =>
-            parse(s).flatMap(_.as[T]).fold(
-              F.raiseError[T](_),
-              F.pure
-            )
-          }
+          docOpt <- docRawOpt traverse parseRevised[T]
         } yield docOpt
       }
     } yield docOpt.flatten
@@ -143,55 +181,62 @@ object Storage {
     } yield ()
 
     def createDocument[T](name: String, document: Document[T])(implicit
-      encoder: Encoder[T]
-    ): F[Unit] = for {
+      encoder: Encoder[T],
+      decoder: Decoder[T]
+    ): F[Revised[T]] = for {
       collection <- getOrCreateCollection(name)
       doc = document.value.asJson deepMerge
         Json.obj(("_key" := document.key) :: document.revision.toList.map("_rev" := _): _*)
-      _ <- FJF.delayFuture(F.delay(collection.insertDocument(doc.noSpaces, createOptions)))
-    } yield ()
+      res <- FJF.delayFlat(
+        F.delay(collection.insertDocument(doc.noSpaces, createOptions)),
+        dbError
+      ).newDocF[T]
+    } yield res
+
+    private def dbError = {
+      StorageException(500, "DB return entity null, should not happen")
+    }
 
     def putDocument[T](name: String, document: Document[T])(implicit
-      encoder: Encoder[T]
-    ): F[Unit] = for {
+      encoder: Encoder[T],
+      decoder: Decoder[T]
+    ): F[Revised[T]] = for {
       collection <- getOrCreateCollection(name)
       doc = document.value.asJson deepMerge
         Json.obj(("_key" := document.key) :: document.revision.toList.map("_rev" := _): _*)
-      _ <- FJF.delayFuture(F.delay(collection.replaceDocument(document.key, doc.noSpaces, replaceOptions))).void
+      res <- FJF.delayFlat(
+          F.delay(collection.replaceDocument(document.key, doc.noSpaces, replaceOptions)),
+          dbError
+        ).newDocF[T]
         .recoverWith({
           case t: ArangoDBException if t.getResponseCode == 404 =>
-            FJF.delayFuture(F.delay(collection.insertDocument(document.key, doc.noSpaces, createOptions))).void
+            FJF.delayFlat(
+              F.delay(collection.insertDocument(doc.noSpaces, createOptions)),
+              dbError
+            ).newDocF[T]
         })
-    } yield ()
+    } yield res
 
     def updateDocument[T](name: String, document: Document[T])(implicit
       encoder: Encoder[T],
       decoder: Decoder[T]
-    ): F[T] = {
-      def handleEntity(updateEntity: DocumentUpdateEntity[String]): F[Option[T]] = for {
-        ns <- updateEntity.getNew match {
-          case s: String => F.pure(s.some)
-          case _ => F.pure(None)
-        }
-        docOpt <- ns.traverse(parse(_).flatMap(_.as[T]).fold(
-          F.raiseError[T],
-          F.pure
-        ))
-      } yield docOpt
-
+    ): F[Revised[T]] = {
 
       for {
         collection <- getOrCreateCollection(name)
         doc = document.value.asJson deepMerge
           Json.obj(("_key" := document.key) :: document.revision.toList.map("_rev" := _): _*)
         updatedOpt <- FJF.delayFuture(F.delay(collection.updateDocument(document.key, doc.noSpaces, updateOptions)))
-          .flatMap(_ traverse handleEntity)
+          .flatMap(_ traverse { e => parseRevised[T](e.getNew) })
           .recover({ case t: ArangoDBException if t.getResponseCode == 404 => None })
-        updated <- updatedOpt.flatten match {
+        updated <- updatedOpt match {
           case Some(d) =>
             F.pure(d)
           case None =>
-            FJF.delayFuture(F.delay(collection.insertDocument(document.key, doc.noSpaces, createOptions))) as document.value
+            FJF.delayFlat(
+              F.delay(collection.insertDocument(doc.noSpaces, createOptions)),
+              dbError
+            ).newDocF[T]
         }
       } yield updated
     }

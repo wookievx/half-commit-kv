@@ -2,6 +2,7 @@ package halfcommit.storage.util
 
 import java.util.concurrent.{CompletableFuture, CompletionException}
 
+import cats.MonadError
 import cats.effect.Effect
 import cats.syntax.all._
 
@@ -10,6 +11,16 @@ import scala.util.control.NonFatal
 
 trait FromJavaFuture[F[_]] {
   def delayFuture[T: ClassTag](future: F[CompletableFuture[T]]): F[Option[T]]
+  def delayFlat[T: ClassTag](
+    future: F[CompletableFuture[T]],
+    onError: => Throwable
+  )(implicit
+    F: MonadError[F, Throwable]
+  ): F[T] =
+    delayFuture(future) flatMap {
+      case Some(t) => F.pure(t)
+      case None => F.raiseError(onError)
+    }
 }
 
 object FromJavaFuture {
