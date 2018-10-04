@@ -20,6 +20,8 @@ libraryDependencies ++= Seq(
 
 libraryDependencies += "org.specs2" %% "specs2-core" % "4.3.4" % Test
 
+libraryDependencies += "com.github.pureconfig" %% "pureconfig" % "0.9.2"
+
 libraryDependencies += "com.github.nscala-time" %% "nscala-time" % "2.20.0"
 
 libraryDependencies ++= Seq(

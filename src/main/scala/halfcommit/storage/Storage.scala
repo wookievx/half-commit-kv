@@ -5,9 +5,11 @@ import cats.effect.concurrent._
 import cats.instances.option._
 import cats.syntax.all._
 import cats.instances.either._
-import com.arangodb.entity.{DocumentCreateEntity, DocumentUpdateEntity}
+import com.arangodb.entity._
 import com.arangodb.model._
-import com.arangodb.{ArangoCollectionAsync, ArangoDBException, ArangoDatabaseAsync}
+import com.arangodb.{ArangoCollectionAsync, ArangoDBAsync, ArangoDBException, ArangoDatabaseAsync}
+import com.typesafe.config.{Config, ConfigFactory}
+import pureconfig._
 import halfcommit.storage.Storage.{Document, Revised}
 import halfcommit.storage.util.FromJavaFuture
 import io.circe._
@@ -68,19 +70,23 @@ object Storage {
 
   implicit def documentEncoder[T: Encoder]: Encoder[Document[T]] = deriveEncoder
 
-  case class Versioned[T](doc: T, revision: String) //todo implement revision properly
+  case class Versioned[T](doc: T, revision: String)
 
-  case class CollectionConfig(numShards: Int, replication: Int, shardKeys: List[String])
-
-  case class StorageException(code: Int, message: String) extends Throwable(message)
-
-  val collectionConfig: CollectionConfig = CollectionConfig(
-    2,
-    2,
-    List.empty
+  case class StorageConfig(
+    host: String,
+    port: Int,
+    user: String,
+    password: String,
+    database: String,
+    numShards: Int,
+    replication: Int,
+    shardKeys: List[String],
+    waitForSync: Boolean,
+    timeout: Int,
+    maxConnections: Int
   )
 
-  import collectionConfig._
+  case class StorageException(code: Int, message: String) extends Throwable(message)
 
   trait ResponseEntity[E] {
     def newDoc(entity: E): String
@@ -101,7 +107,15 @@ object Storage {
   }
 
 
-  class DefaultStorage[F[_] : ConcurrentEffect : FromJavaFuture](private val db: ArangoDatabaseAsync) extends Storage[F] {
+  class DefaultStorage[F[_] : ConcurrentEffect : FromJavaFuture](
+    db: ArangoDatabaseAsync,
+    config: StorageConfig
+  ) extends Storage[F] {
+
+    import config.numShards
+    import config.replication
+    import config.shardKeys
+
     private val F = ConcurrentEffect[F]
     private val FJF = FromJavaFuture[F]
 
@@ -241,6 +255,34 @@ object Storage {
       } yield updated
     }
 
+  }
+
+  def default[F[_]](implicit F: ConcurrentEffect[F]): F[Storage[F]] = {
+
+    def arangoConnection(collectionConfig: StorageConfig): ArangoDBAsync = {
+      import collectionConfig._
+      (new ArangoDBAsync.Builder)
+        .host(host, port)
+        .user(user)
+        .password(password)
+        .build()
+    }
+
+    val configF: F[StorageConfig] = F catchNonFatal {
+      val underlying: Config = ConfigFactory.load()
+      implicit def hint[T]: ProductHint[T] = ProductHint[T](ConfigFieldMapping(CamelCase, CamelCase))
+      val _ = hint
+      loadConfig[StorageConfig](underlying.atPath("arangodb")).fold(
+        fs => throw new Exception(fs.toList.mkString("[", ", ", "]")),
+        identity
+      )
+    }
+
+    for {
+      config <- configF
+      arango = arangoConnection(config)
+      database <- F.delay(arango.db(config.database))
+    } yield new DefaultStorage(database, config)
   }
 
 }
